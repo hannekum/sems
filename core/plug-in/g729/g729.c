@@ -30,24 +30,27 @@
 
 */
 
-#include "../../log.h"
-#include <stdio.h>
 #include "amci.h"
 #include "codecs.h"
 
-#include <stdlib.h>
 #include <bcg729/decoder.h>
 #include <bcg729/encoder.h>
+#include "../../log.h"
 
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 
-static int pcm16_2_g729(unsigned char* out_buf, unsigned char* in_buf, unsigned int size, 
-			unsigned int channels, unsigned int rate, long h_codec );
-
-static int g729_2_pcm16(unsigned char* out_buf, unsigned char* in_buf, unsigned int size, 
-		       unsigned int channels, unsigned int rate, long h_codec );
+typedef unsigned char uint8_t;
+typedef signed short int16_t;
 
 static long g729_create(const char* format_parameters, amci_codec_fmt_info_t* format_description);
 static void g729_destroy(long h_codec);
+
+static int pcm16_2_g729(unsigned char* out_buf, unsigned char* in_buf, unsigned int size, 
+        unsigned int channels, unsigned int rate, long h_codec );
+static int g729_2_pcm16(unsigned char* out_buf, unsigned char* in_buf, unsigned int size, 
+        unsigned int channels, unsigned int rate, long h_codec );
 
 static unsigned int g729_bytes2samples(long, unsigned int);
 static unsigned int g729_samples2bytes(long, unsigned int);
@@ -59,15 +62,15 @@ static unsigned int g729_samples2bytes(long, unsigned int);
 
 BEGIN_EXPORTS( "g729", AMCI_NO_MODULEINIT, AMCI_NO_MODULEDESTROY)
 
-    BEGIN_CODECS
+  BEGIN_CODECS
+
     CODEC( CODEC_G729, pcm16_2_g729, g729_2_pcm16, AMCI_NO_CODEC_PLC,
-	   (amci_codec_init_t)g729_create, (amci_codec_destroy_t)g729_destroy,
-            g729_bytes2samples, g729_samples2bytes
-          )
+        (amci_codec_init_t)g729_create, (amci_codec_destroy_t)g729_destroy,
+        g729_bytes2samples, g729_samples2bytes )
     END_CODECS
     
     BEGIN_PAYLOADS
-    PAYLOAD( G729_PAYLOAD_ID, "G729", 8000, 8000, 1, CODEC_G729, AMCI_PT_AUDIO_FRAME )
+      PAYLOAD( G729_PAYLOAD_ID, "G729", 8000, 8000, 1, CODEC_G729, AMCI_PT_AUDIO_FRAME )
     END_PAYLOADS
 
     BEGIN_FILE_FORMATS
@@ -75,91 +78,88 @@ BEGIN_EXPORTS( "g729", AMCI_NO_MODULEINIT, AMCI_NO_MODULEDESTROY)
 
 END_EXPORTS
 
-struct G729_codec 
-{
-    bcg729DecoderChannelContextStruct* dec;
-    bcg729EncoderChannelContextStruct* enc;
-};
+typedef struct {
+  bcg729DecoderChannelContextStruct* dec;
+  bcg729EncoderChannelContextStruct* enc;
+} G729_codec;
 
 
 long g729_create(const char* format_parameters, amci_codec_fmt_info_t* format_description)
 {
-    struct G729_codec *codec;
+  G729_codec* codec = (G729_codec*)calloc(1, sizeof(G729_codec));
 
-    codec = calloc(sizeof(struct G729_codec), 1);
-    codec->enc = initBcg729EncoderChannel();
-    codec->dec = initBcg729DecoderChannel();
+  codec->enc = initBcg729EncoderChannel();
+  codec->dec = initBcg729DecoderChannel();
 
-    return (long) codec;
+  return (long)codec;
 }
 
 
-static void
-g729_destroy(long h_codec)
+static void g729_destroy(long h_codec)
 {
-    struct G729_codec *codec = (struct G729_codec *) h_codec;
+  if (!h_codec)
+    return;
 
-    if (!h_codec)
-      return;
+  G729_codec* codec = (G729_codec*)h_codec;
 
-    closeBcg729DecoderChannel(codec->dec);
-    closeBcg729EncoderChannel(codec->enc);
-    free(codec);
+  closeBcg729DecoderChannel(codec->dec);
+  closeBcg729EncoderChannel(codec->enc);
+
+  free(codec);
 }
 
 
 static int pcm16_2_g729(unsigned char* out_buf, unsigned char* in_buf, unsigned int size, 
-			unsigned int channels, unsigned int rate, long h_codec )
+    unsigned int channels, unsigned int rate, long h_codec )
 {
-    struct G729_codec *codec = (struct G729_codec *) h_codec;
-    unsigned int out_size = 0;
-
-    if (!h_codec)
-      return -1;
+  if (!h_codec)
+    return -1;
     
-    if (size % PCM_BYTES_PER_FRAME != 0){
-      ERROR("pcm16_2_g729: number of blocks should be integral (block size = %u)\n", PCM_BYTES_PER_FRAME);
-      return -1;
-    }
+  if (size % PCM_BYTES_PER_FRAME != 0){
+    ERROR("pcm16_2_g729: number of blocks should be integral (block size = %u)\n", PCM_BYTES_PER_FRAME);
+    return -1;
+  }
 
-    while(size >= PCM_BYTES_PER_FRAME){
-      /* Encode a frame  */
-      bcg729Encoder(codec->enc, in_buf, out_buf);
-      size -= PCM_BYTES_PER_FRAME;
-      in_buf += PCM_BYTES_PER_FRAME;
-      out_buf += G729_BYTES_PER_FRAME;
-      out_size += G729_BYTES_PER_FRAME;
-    }
+  G729_codec* codec = (G729_codec*)h_codec;
+  unsigned int out_size = 0;
 
-    return out_size;
+  while(size >= PCM_BYTES_PER_FRAME){
+    bcg729Encoder(codec->enc, (signed short*)in_buf, out_buf);
+
+    size -= PCM_BYTES_PER_FRAME;
+    in_buf += PCM_BYTES_PER_FRAME;
+
+    out_buf += G729_BYTES_PER_FRAME;
+    out_size += G729_BYTES_PER_FRAME;
+  }
+  return out_size;
 }
 
 static int g729_2_pcm16(unsigned char* out_buf, unsigned char* in_buf, unsigned int size, 
-		       unsigned int channels, unsigned int rate, long h_codec )
+    unsigned int channels, unsigned int rate, long h_codec )
 {
-    struct G729_codec *codec = (struct G729_codec *) h_codec;
-    unsigned int out_size = 0;
+  if (!h_codec)
+    return -1;
 
-    if (!h_codec)
-      return -1;
+  if (size % G729_BYTES_PER_FRAME != 0){
+    ERROR("g729_2_pcm16: number of blocks should be integral (block size = %u)\n", G729_BYTES_PER_FRAME);
+    return -1;
+  }
 
-    if (size % G729_BYTES_PER_FRAME != 0){
-      ERROR("g729_2_pcm16: number of blocks should be integral (block size = %u)\n", G729_BYTES_PER_FRAME);
-      return -1;
-    }
+  G729_codec* codec = (G729_codec*)h_codec;
+  unsigned int out_size = 0;
 
-    while(size >= G729_BYTES_PER_FRAME){
-      /* Decode a frame  */
-      bcg729Decoder(codec->dec, in_buf, 0, out_buf);
+  while(size >= G729_BYTES_PER_FRAME){
+    bcg729Decoder(codec->dec, in_buf, 0, (signed short*)out_buf);
 
-      in_buf += G729_BYTES_PER_FRAME;
-      size -= G729_BYTES_PER_FRAME;
+    size -= G729_BYTES_PER_FRAME;
+    in_buf += G729_BYTES_PER_FRAME;
 
-      out_buf += PCM_BYTES_PER_FRAME;
-      out_size += PCM_BYTES_PER_FRAME;
-    }
+    out_buf += PCM_BYTES_PER_FRAME;
+    out_size += PCM_BYTES_PER_FRAME;
+  }
 
-    return out_size;
+  return out_size;
 }
 
 static unsigned int g729_bytes2samples(long h_codec, unsigned int num_bytes) {
