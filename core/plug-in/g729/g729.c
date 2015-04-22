@@ -165,3 +165,4 @@ static int g729_2_pcm16(unsigned char* out_buf, unsigned char* in_buf, unsigned 
 static unsigned int g729_bytes2samples(long h_codec, unsigned int num_bytes) {
   return G729_BYTES_PER_FRAME * num_samples /  G729_SAMPLES_PER_FRAME;
 }
+
